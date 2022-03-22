@@ -1,0 +1,122 @@
+#!/bin/bash
+
+# docker-services control
+docker_services="/data/linux/scripts/naomi/docker-compose/docker-services"
+
+# servers in this cluster
+Container=(
+  g.ark.loomis  # The Island
+  g.ark.cantour # The Center
+  g.ark.ratheg  # Ragnarok
+  g.ark.valayne # Valguero
+)
+
+# shutdown ark.instance saveworld|nosaveworld
+Shutdown() {
+  local container="${1}"
+  local instance="${1,,}"
+        instance="${instance/g\.ark\.}"
+
+  case ${2} in
+    saveworld)    docker exec -it "${container}" arkmanager stop --saveworld @${instance} ;;
+  nosaveworld|'') docker exec -it "${container}" arkmanager stop @${instance} ;;
+  esac
+}
+
+# start ark.instance
+Start() {
+  local container="${1}"
+  local instance="${1,,}"
+        instance="${instance/g\.ark\.}"
+
+  eval ${docker_services} -svc ark.${instance} -s
+
+  while [[ ! "$(Status ${container} r)" =~ Yes ]]; do
+    sleep 1
+  done
+
+}
+
+# Status ark.instance running|listening
+Status() {
+  local container="${1}"
+  local instance="${1,,}"
+        instance="${instance/g\.ark\.}"
+  local status="${2}"
+
+  if ! docker exec -it "${container}" arkmanager status @${instance} >/dev/null 2>&1 ; then
+    local _started_="0"
+  fi
+
+  case ${status} in
+    listening|listen|l)
+      if [ "${_started_}" = "0" ]; then
+        echo No
+      else
+        echo $(docker exec -it "${container}" arkmanager status @${instance} | awk -F: '/listening/ {print $2}' | sed 's/\x1B\[[0-9;]\+[A-Za-z]//g')
+      fi
+      ;;
+    running|run|r)
+      if [ "${_started_}" = "0" ]; then
+        echo No
+      else
+        echo $(docker exec -it "${container}" arkmanager status @${instance} | awk -F: '/running/ {print $2}' | sed 's/\x1B\[[0-9;]\+[A-Za-z]//g')
+      fi
+      ;;
+    *)
+      if [ "${_started_}" = "1" ]; then
+        docker exec -it "${container}" arkmanager status @${instance} | sed 's/\x1B\[[0-9;]\+[A-Za-z]//g'
+      fi
+      ;;
+  esac
+}
+
+case ${1} in
+  restart)
+    for c in ${Container[@]} ; do
+      if [[ "$(Status ${c} l)" =~ Yes ]]; then
+        Shutdown ${c} saveworld
+      elif [[ "$(Status ${c} r)" =~ Yes ]]; then
+        Shutdown ${c} nosaveworld
+      elif [ ! "$(Status ${c} r)" ]; then
+        continue
+      fi
+    done
+    for c in ${Container[@]} ; do
+      if [ ! "$(Status ${c} r)" ]; then
+        Start ${c}
+      elif [[ "$(Status ${c} r)" =~ No ]]; then
+        Start ${c}
+      elif [[ "$(Status ${c} r)" =~ Yes ]]; then
+        continue
+      fi
+    done
+    ;;
+  stop|shutdown)
+    for c in ${Container[@]} ; do
+      if [[ "$(Status ${c} l)" =~ Yes ]]; then
+        Shutdown ${c} saveworld
+      elif [[ "$(Status ${c} r)" =~ Yes ]]; then
+        Shutdown ${c} nosaveworld
+      elif [ ! "$(Status ${c} r)" ]; then
+        continue
+      fi
+    done
+    ;;
+  start)
+    for c in ${Container[@]} ; do
+      if [ ! "$(Status ${c} r)" ]; then
+        Start ${c}
+      elif [[ "$(Status ${c} r)" =~ No ]]; then
+        Start ${c}
+      elif [[ "$(Status ${c} r)" =~ Yes ]]; then
+        continue
+      fi
+    done
+    ;;
+  status)
+    if [ -n "${2}" ]; then
+      Status ${2}
+    fi
+    ;;
+esac
